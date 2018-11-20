@@ -551,7 +551,7 @@ Predictor.prototype = {
 	 *
 	 * @param data, input data list, for example, [[...], [...], ..., [...]]
 	 * @param inputShapes
-	 * @returns { tf.Tensor }
+	 * @returns { tf.Tensor[] }
 	 */
 
 	createInputTensorList: function( data, inputShapes ) {
@@ -636,13 +636,19 @@ TfjsPredictor.prototype = Object.assign( Object.create( Predictor.prototype ), {
 
 	predict: function( data ) {
 
-		// Create input tensor for prediction.
+		let predictor = this;
 
-		let inputTensor = this.createInputTensor( data );
+		let predictResult = tf.tidy( () => {
 
-		// Get prediction result from loaded model.
+			// Create input tensor for prediction.
 
-		let predictResult = this.model.resource.predict( inputTensor );
+			let inputTensor = predictor.createInputTensor( data );
+
+			// Get prediction result from loaded model.
+
+			return predictor.model.resource.predict( inputTensor );
+
+		} );
 
 		return predictResult;
 
@@ -821,13 +827,19 @@ KerasPredictor.prototype = Object.assign( Object.create( Predictor.prototype ), 
 
 	predict: function( data ) {
 
-		// Create input tensor for prediction.
+		let predictor = this;
 
-		let inputTensor = this.createInputTensor( data );
+		let predictResult = tf.tidy( () => {
 
-		// Get prediction result from loaded model.
+			// Create input tensor for prediction.
 
-		let predictResult = this.model.resource.predict( inputTensor );
+			let inputTensor = predictor.createInputTensor( data );
+
+			// Get prediction result from loaded model.
+
+			return predictor.model.resource.predict( inputTensor );
+
+		} );
 
 		return predictResult;
 
@@ -1015,25 +1027,33 @@ TfPredictor.prototype = Object.assign( Object.create( Predictor.prototype ), {
 
 	predict: function( data ) {
 
-		// Create input tensor for prediction.
+		let predictor = this;
 
-		let inputTensor = this.createInputTensor( data );
+		let predictResult = tf.tidy( () => {
 
-		let predictResult;
+			// Create input tensor for prediction.
 
-		if ( this.outputsName !== undefined ) {
+			let inputTensor = predictor.createInputTensor( data );
 
-			// If has outputsName, use execute to get prediction result.
+			let predictResult;
 
-			predictResult = this.model.resource.execute( inputTensor, this.outputsName );
+			if ( this.outputsName !== undefined ) {
 
-		} else {
+				// If has outputsName, use execute to get prediction result.
 
-			// If outputsName is undefined, use predict to get prediction result.
+				predictResult = predictor.model.resource.execute( inputTensor, this.outputsName );
 
-			predictResult = this.model.resource.predict( inputTensor );
+			} else {
 
-		}
+				// If outputsName is undefined, use predict to get prediction result.
+
+				predictResult = predictor.model.resource.predict( inputTensor );
+
+			}
+
+			return predictResult;
+
+		} );
 
 		return predictResult;
 
@@ -1213,6 +1233,144 @@ TfLoader.prototype = Object.assign( Object.create( Loader.prototype ), {
 		if ( loaderConfig.outputsName !== undefined ) {
 
 			this.outputsName = loaderConfig.outputsName;
+
+		}
+
+	}
+
+} );
+
+/**
+ * Handle prediction for live model (tfjs model, as only tfjs can train in the browser).
+ * May be there will other training library can run in the browser, so use a new Predictor.
+ *
+ * @param model, model context
+ * @param config, Predictor config
+ * @constructor
+ */
+
+function LivePredictor( model, config ) {
+
+	// "LivePredictor" inherits from abstract predictor "TfjsPredictor".
+
+	TfjsPredictor.call( this, model, config );
+
+	this.predictorType = "LivePredictor";
+
+}
+
+LivePredictor.prototype = Object.assign( Object.create( TfjsPredictor.prototype ), {
+
+
+} );
+
+/**
+ * Load live model for TensorSpace.
+ * As keras and tensorflow model can not run in the browser, this live loader works for tfjs model.
+ *
+ * @param model, model context
+ * @param config, user's configuration for Loader
+ * @constructor
+ */
+
+function LiveLoader( model, config ) {
+
+	// "LiveLoader" inherits from abstract Loader "Loader".
+
+	Loader.call( this, model, config );
+
+	/**
+	 * tfjs model's reference
+	 * LiveLoader will store tfjs model's reference into TensorSpace model.
+	 *
+	 * @type { reference }
+	 */
+
+	this.modelHandler = undefined;
+
+	this.loadLiveConfig( config );
+
+	this.loaderType = "liveLoader";
+
+}
+
+LiveLoader.prototype = Object.assign( Object.create( Loader.prototype ), {
+
+	/**
+	 * ============
+	 *
+	 * Functions below override base class Loader's abstract method
+	 *
+	 * LiveLoader overrides Loader's function:
+	 * load, setPredictor
+	 *
+	 * ============
+	 */
+
+	/**
+	 * load(), load a live tfjs model.
+	 * Its an synchronous process, to make it compatible with other loader, use async method.
+	 *
+	 * Three steps:
+	 * 1. Load tfjs model into TSP
+	 * 2. Set live predictor to TSP
+	 * 3. Fire callback function if defined.
+	 *
+	 * @returns { Promise.<void> }
+	 */
+
+	load: async function() {
+
+		this.model.resource = this.modelHandler;
+
+		this.setPredictor();
+
+		if ( this.onCompleteCallback !== undefined ) {
+
+			this.onCompleteCallback();
+
+		}
+
+	},
+
+	/**
+	 * setPredictor(), create a live predictor, config it and set the predictor for TSP model.
+	 */
+
+	setPredictor: function() {
+
+		let livePredictor = new LivePredictor( this.model, this.config );
+
+		this.model.predictor = livePredictor;
+
+	},
+
+	/**
+	 * ============
+	 *
+	 * Functions above override base class Predictor's abstract method.
+	 *
+	 * ============
+	 */
+
+	/**
+	 * loadLiveConfig(), Load user's configuration into LiveLoader.
+	 * The configuration load in this function sometimes has not been loaded in "Loader"'s "loadLoaderConfig".
+	 *
+	 * @param loaderConfig
+	 */
+
+	loadLiveConfig: function( loaderConfig ) {
+
+		// "modelHandler" configuration is required.
+
+		if ( loaderConfig.modelHandler !== undefined ) {
+
+			this.modelHandler = loaderConfig.modelHandler;
+
+		} else {
+
+			console.error( "\"modelHandler\" property is required to load live model." );
 
 		}
 
@@ -1760,6 +1918,10 @@ AbstractModel.prototype = Object.assign( Object.create( SceneInitializer.prototy
 
 			this.loadTfModel( config );
 
+		} else if ( config.type = "live" ) {
+
+			this.loadLiveModel( config );
+
 		} else {
 
 			console.error( "Do not support to load model type " + config.type );
@@ -1803,6 +1965,13 @@ AbstractModel.prototype = Object.assign( Object.create( SceneInitializer.prototy
 	loadTfModel: function( config ) {
 
 		let loader = new TfLoader( this, config );
+		loader.preLoad();
+
+	},
+
+	loadLiveModel: function( config ) {
+
+		let loader = new LiveLoader( this, config );
 		loader.preLoad();
 
 	},
@@ -2256,6 +2425,8 @@ Sequential.prototype = Object.assign( Object.create( AbstractModel.prototype ), 
 
 	predict: function( input, callback ) {
 
+		this.clear();
+
 		this.inputValue = input;
 
 		if ( this.resource !== undefined ) {
@@ -2289,6 +2460,18 @@ Sequential.prototype = Object.assign( Object.create( AbstractModel.prototype ), 
 	 */
 
 	clear: function() {
+
+		if ( this.predictResult !== undefined ) {
+
+			for ( let i = 0; i < this.predictResult.length; i ++ ) {
+
+				tf.dispose( this.predictResult[ i ] );
+
+			}
+
+			this.predictResult = undefined;
+
+		}
 
 		for ( let i = 0; i < this.layers.length; i ++ ) {
 
@@ -2954,6 +3137,8 @@ Model.prototype = Object.assign( Object.create( AbstractModel.prototype ), {
 
 	predict: function( input, callback ) {
 
+		this.clear();
+
 		this.inputValue = input;
 
 		if ( this.resource !== undefined ) {
@@ -2987,6 +3172,18 @@ Model.prototype = Object.assign( Object.create( AbstractModel.prototype ), {
 	 */
 
 	clear: function() {
+
+		if ( this.predictResult !== undefined ) {
+
+			for ( let i = 0; i < this.predictResult.length; i ++ ) {
+
+				tf.dispose( this.predictResult[ i ] );
+
+			}
+
+			this.predictResult = undefined;
+
+		}
 
 		for ( let i = 0; i < this.layers.length; i ++ ) {
 
@@ -15260,16 +15457,120 @@ let YoloResultGenerator = (function() {
 
     }
 
+    // Ascend
+    function sortBy(field) {
+
+        return function(a,b) {
+
+            return b[field] - a[field];
+
+        }
+
+    }
+
     //TODO implement iou & nms
 
-	function checkRange(x, range) {
+	function transferPrediction( prediction ) {
+
+    	// prediction = {x:, y:, width:, height:, finalScore:, labelName:}
+		// return a list of [ x1, y1, x2, y2]
+
+    	let list = [];
+
+    	list.push( prediction["x"] );
+    	list.push( prediction["y"] );
+    	list.push( prediction["x"] + prediction["width"]);
+    	list.push( prediction["y"] + prediction["height"]);
+
+    	return list;
+
+	}
+
+	function iou( boxA, boxB ) {
+
+    	// boxA = boxB = [ x1, y1, x2, y2 ]
+		// (x1, y1) for left-top point
+		// (x2, y2) for right-bottom point
+
+		let xA = Math.max( boxA[0], boxB[0] );
+		let yA = Math.max( boxA[1], boxB[1] );
+		let xB = Math.min( boxA[2], boxB[2] );
+		let yB = Math.min( boxA[3], boxB[3] );
+
+		// Compute the area of intersection
+		let intersectionArea = ( xB - xA + 1) * ( yB - yA + 1 );
+
+		// Compute the area of both rectangles
+		let boxAArea = ( boxA[2] - boxA[0] + 1 ) * ( boxA[3] - boxA[1] + 1 );
+		let boxBArea = ( boxB[2] - boxB[0] + 1 ) * ( boxB[3] - boxB[1] + 1 );
+
+		// Compute the IOU
+
+		return intersectionArea / ( boxAArea + boxBArea - intersectionArea );
+
+	}
+
+	function nonMaximalSuppression( thresholdedPredictions, iouThreshold ){
+
+    	// thresholdedPredcitions: is an array with predictive results
+
+		let nmsPredictions = [];
+
+		nmsPredictions.push( thresholdedPredictions[0] );
+
+		let i = 1;
+
+		let toDelete = false;
+
+		while ( i < thresholdedPredictions.length ) {
+
+			let nBoxesToCheck = nmsPredictions.length;
+
+			toDelete = false;
+
+			let j = 0;
+
+			while ( j < nBoxesToCheck ) {
+
+				let boxA = transferPrediction( thresholdedPredictions[i] );
+
+				let boxB = transferPrediction( nmsPredictions[j] );
+
+				let curIOU = iou( boxA, boxB );
+
+				if ( curIOU > iouThreshold ) {
+
+					toDelete = true;
+
+				}
+
+                j++;
+
+			}
+
+			if ( toDelete === false )  {
+
+				nmsPredictions.push( thresholdedPredictions[i] );
+
+			}
+
+			i++;
+
+		}
+
+		return nmsPredictions;
+
+	}
+
+    function checkRange(x, range) {
 
         return x >= 0 && x <= range;
 
     }
 
     function getDetectedBox( neuralData, channelDepth, channelShape, outputShape,
-                             anchors, classLabelList, scoreThreshold = 0.5 ) {
+                             anchors, classLabelList, scoreThreshold, iouThreshold,
+							 isNMS) {
 
         // neuralData : array [71825] for coco; [21125] for VOC
         // channelShape ： array = [13, 13]
@@ -15282,11 +15583,11 @@ let YoloResultGenerator = (function() {
 
         let output = [];
 
-		for ( let row = 1; row <= widthRange; row ++ ) {
+		for ( let row = 0; row < widthRange; row ++ ) {
 
-			for ( let col = 1; col <= heightRange; col ++ ) {
+			for ( let col = 0; col < heightRange; col ++ ) {
 
-				let start = row * col - 1;
+				let start = row * widthRange + col;
 
 				let channelData = neuralData.slice( start * channelDepth, ( start + 1 ) * channelDepth );
 
@@ -15295,18 +15596,16 @@ let YoloResultGenerator = (function() {
 				for ( let box = 0; box < anchors.length / 2; box ++ ) {
 
                     let index = box * len;
-                    let bx = ( sigmoid( channelData[ index ] ) + col - 1 );
-                    let by = ( sigmoid( channelData[ index + 1 ] ) + row - 1 );
+                    let bx = ( sigmoid( channelData[ index ] ) + col );
+                    let by = ( sigmoid( channelData[ index + 1 ] ) + row );
                     let bw = anchors[ box * 2 ] * Math.exp( channelData[ index + 2 ] );
                     let bh = anchors[ box * 2 + 1 ] * Math.exp( channelData[ index + 3 ] );
 
-                    // console.log("------------------Index: " + index + " ----------------------");
-                    // console.log( "bx: " + bx + " | by: " + by );
-                    // console.log( "bw: " + bw + " | bh: " + bh );
-
                     let finalConfidence = sigmoid( channelData[ index + 4 ] );
 
-                    let classPrediction = softmax( channelData.slice( index + 5, index + 5 + len ) );
+                    let probability = channelData.slice( index + 5, index + len );
+
+                    let classPrediction = softmax( probability );
 
                     let bestClassIndex = classPrediction.indexOf( Math.max( ...classPrediction ) );
 
@@ -15316,9 +15615,6 @@ let YoloResultGenerator = (function() {
 
                     let finalScore = bestClassScore * finalConfidence;
 
-                    // console.log("Class name: " + bestClassLabel + "| Prediction score: " + bestClassScore);
-                    // console.log("Final Score: " + finalScore);
-
                     let width = bw / widthRange * outputShape[ 0 ];
                     let height = bh  / heightRange * outputShape[ 1 ];
                     let x = bx / widthRange * outputShape[ 0 ] - width / 2;
@@ -15326,25 +15622,27 @@ let YoloResultGenerator = (function() {
 
                     if ( finalScore > scoreThreshold ) {
 
-                        // console.log("Add 1 detective object");
-
-                        output.push( {
-
-                            x: x,
-                            y: y,
-                            width: width,
-                            height: height,
-
-                        } );
-
                         thresholdedPredictions.push( {
-                            x: x,
-                            y: y,
-                            width: width,
-                            height: height,
-							finalScore: finalScore,
-							className: bestClassLabel
+                            "x": x,
+                            "y": y,
+                            "width": width,
+                            "height": height,
+							"finalScore": finalScore,
+							"className": bestClassLabel
                         } );
+
+                        if ( isNMS === false ) {
+
+                            output.push( {
+
+                                x: x,
+                                y: y,
+                                width: width,
+                                height: height
+
+                            });
+
+                        }
 
                     }
 
@@ -15354,14 +15652,34 @@ let YoloResultGenerator = (function() {
 
 		}
 
-		// console.log( thresholdedPredictions );
+		thresholdedPredictions.sort(sortBy("finalScore"));
+
+		let nmsPredictions = nonMaximalSuppression( thresholdedPredictions, iouThreshold );
+
+		if ( isNMS === true ) {
+
+            for ( let i = 0; i < nmsPredictions.length; i++ ) {
+
+                output.push( {
+
+                    x: nmsPredictions[i]["x"],
+                    y: nmsPredictions[i]["y"],
+                    width: nmsPredictions[i]["width"],
+                    height: nmsPredictions[i]["height"],
+
+                });
+
+            }
+
+		}
+
 
 		return output;
 
 	}
 
 	function getChannelBox( channelData, channelShape, outputShape,
-                            anchors, classLabelList, scoreThreshold, isDrawFiveBoxes,
+                            anchors, classLabelList, scoreThreshold, iouThreshold, isDrawFiveBoxes,
 							cx, cy ) {
 
         // channelData : array [425] for coco; [125] for VOC
@@ -15377,8 +15695,6 @@ let YoloResultGenerator = (function() {
 
 		let output = [];
 
-		// console.log( "cx: " + cx + "| cy: " + cy );
-
 		for ( let box = 0; box < anchors.length / 2; box ++ ) {
 
 			let index = box * len;
@@ -15387,24 +15703,15 @@ let YoloResultGenerator = (function() {
 			let bw = anchors[ box * 2 ] * Math.exp( channelData[ index + 2 ] );
 			let bh = anchors[ box * 2 + 1 ] * Math.exp( channelData[ index + 3 ] );
 
-            // console.log("------------------Index: " + index + " ----------------------");
-            // console.log( "bx: " + bx + " | by: " + by );
-            // console.log( "bw: " + bw + " | bh: " + bh );
-
 			let finalConfidence = sigmoid( channelData[ index + 4 ] );
 
-			let classPrediction = softmax( channelData.slice( index + 5, index + 5 + len ) );
+			let classPrediction = softmax( channelData.slice( index + 5, index + len ) );
 
 			let bestClassIndex = classPrediction.indexOf( Math.max( ...classPrediction ) );
-
-			let bestClassLabel = classLabelList[ bestClassIndex ];
 
 			let bestClassScore = classPrediction[ bestClassIndex ];
 
 			let finalScore = bestClassScore * finalConfidence;
-
-            // console.log("Class name: " + bestClassLabel + "| Prediction score: " + bestClassScore);
-            // console.log("Final Score: " + finalScore);
 
 			let width = bw / widthRange * outputShape[ 0 ];
 			let height = bh  / heightRange * outputShape[ 1 ];
@@ -15561,6 +15868,14 @@ function YoloGrid( config ) {
      */
 
     this.isDrawFiveBoxes = false;
+
+    /**
+     * The toggle to control whether to apply non-maximum suppression to the detection rectangles .
+     * [Default] true, means to apply nms.
+     * @type { bool }
+     */
+
+    this.isNMS = true;
 
     /**
 	 * Model's input shape, the shape is the same as model's input layer.
@@ -16038,6 +16353,8 @@ YoloGrid.prototype = Object.assign( Object.create( NativeLayer.prototype ), {
                     this.anchors,
                     this.classLabelList,
                     this.scoreThreshold,
+					this.iouThreshold,
+                    this.isNMS,
 				);
 
 			} else {
@@ -16051,6 +16368,7 @@ YoloGrid.prototype = Object.assign( Object.create( NativeLayer.prototype ), {
                     this.anchors,
                     this.classLabelList,
                     this.scoreThreshold,
+                    this.iouThreshold,
                     this.isDrawFiveBoxes,
                     widthIndex,
                     heightIndex
@@ -16113,7 +16431,11 @@ YoloGrid.prototype = Object.assign( Object.create( NativeLayer.prototype ), {
 
             this.scoreThreshold = layerConfig.scoreThreshold;
 
+            this.iouThreshold = layerConfig.iouThreshold;
+
             this.isDrawFiveBoxes = layerConfig.isDrawFiveBoxes;
+
+			this.isNMS = layerConfig.isNMS;
 
 		}
 
